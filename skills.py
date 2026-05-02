@@ -266,6 +266,7 @@ def set_volume(level: int = -1, mute: bool = False) -> str:
     """Set system volume (0-100) or toggle mute."""
     try:
         if mute:
+            # Toggle mute via SendKeys (virtual key 0xAD = VK_VOLUME_MUTE)
             run_shell(
                 '$wshell = New-Object -ComObject WScript.Shell; '
                 '$wshell.SendKeys([char]173)'
@@ -273,28 +274,47 @@ def set_volume(level: int = -1, mute: bool = False) -> str:
             return "Toggled mute."
         if level < 0 or level > 100:
             return "[Error] Volume must be 0-100."
-        # Use nircmd if available, otherwise PowerShell workaround
-        # Set volume via .NET Audio session
-        run_shell(
-            f'$vol = [math]::Round({level}/2); '
-            f'1..$vol | ForEach-Object {{ '
-            f'  $wshell = New-Object -ComObject WScript.Shell; '
-            f'  $wshell.SendKeys([char]175) '
-            f'}}'
-        )
-        # More reliable: direct COM approach
-        run_shell(
+
+        # Use PowerShell + COM to set exact volume percentage
+        scalar = level / 100.0
+        ps_cmd = (
             'Add-Type -TypeDefinition @"\n'
+            'using System;\n'
             'using System.Runtime.InteropServices;\n'
-            '[Guid("5CDF2C82-841E-4546-9722-0CF74078229A")]\n'
-            '[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n'
+            '\n'
+            '[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n'
             'interface IAudioEndpointVolume {\n'
-            '    int _0(); int _1(); int _2(); int _3();\n'
+            '    int NotImpl1(); int NotImpl2(); int NotImpl3(); int NotImpl4();\n'
             '    int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);\n'
+            '    int GetMasterVolumeLevelScalar(out float pfLevel);\n'
             '}\n'
-            '"@ -ErrorAction SilentlyContinue\n'
+            '\n'
+            '[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n'
+            'interface IMMDevice { int Activate(ref System.Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface); }\n'
+            '\n'
+            '[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n'
+            'interface IMMDeviceEnumerator { int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice); }\n'
+            '\n'
+            '[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator {}\n'
+            '\n'
+            'public class AudioHelper {\n'
+            '    public static void SetVolume(float level) {\n'
+            '        var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());\n'
+            '        IMMDevice device;\n'
+            '        enumerator.GetDefaultAudioEndpoint(0, 1, out device);\n'
+            '        Guid iid = typeof(IAudioEndpointVolume).GUID;\n'
+            '        object o;\n'
+            '        device.Activate(ref iid, 23, IntPtr.Zero, out o);\n'
+            '        var volume = (IAudioEndpointVolume)o;\n'
+            '        volume.SetMasterVolumeLevelScalar(level, Guid.Empty);\n'
+            '    }\n'
+            '}\n'
+            '"@ -ErrorAction SilentlyContinue;\n'
+            f'[AudioHelper]::SetVolume({scalar})'
         )
-        # Simple fallback: just report what we tried
+        result = run_shell(ps_cmd)
+        if "[Error]" in result:
+            return f"Volume command failed: {result}"
         return f"Volume set to {level}%."
     except Exception as e:
         return f"[Error] {e}"
