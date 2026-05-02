@@ -305,8 +305,23 @@ def get_volume() -> str:
         result = run_shell(ps_cmd)
         if "[Error]" in result or not result:
             return "[Error] Could not retrieve volume."
-        level = float(result.strip()) * 100
-        return f"Current master volume is {int(level)}%."
+        
+        # Defensive parsing: extract first numeric token and handle errors
+        stripped = result.strip()
+        if not stripped:
+            return "[Error] Could not retrieve volume."
+        
+        # Try to extract a floating-point number from the result
+        import re as _re
+        match = _re.search(r'[-+]?\d*\.?\d+', stripped)
+        if not match:
+            return "[Error] Could not retrieve volume."
+        
+        try:
+            level = float(match.group()) * 100
+            return f"Current master volume is {int(level)}%."
+        except ValueError:
+            return "[Error] Could not retrieve volume."
     except Exception as e:
         return f"[Error] {e}"
 

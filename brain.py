@@ -65,14 +65,22 @@ def ensure_model(model: str) -> None:
     """
     Check if a model is available locally.
     If not, pull it automatically (one-time download).
+    For tagged models (e.g., "qwen3:1.7b"), requires exact match.
+    For untagged models (e.g., "qwen3"), accepts any tag variant.
     """
     try:
         available = [m.model for m in ollama.list().models]
-        # Normalize: ollama sometimes appends ':latest'
-        available_normalized = [m.split(":")[0] for m in available]
-        model_base = model.split(":")[0]
 
-        if model_base not in available_normalized and model not in available:
+        # If model string contains a tag (e.g., "qwen3:1.7b"), require exact match
+        if ":" in model:
+            needs_pull = model not in available
+        else:
+            # No tag: normalize and check base name against available variants
+            available_normalized = [m.split(":")[0] for m in available]
+            model_base = model.split(":")[0]
+            needs_pull = model_base not in available_normalized
+
+        if needs_pull:
             print(f"  📥 Pulling {model} (first time — may take a few minutes)...")
             for progress in ollama.pull(model, stream=True):
                 status = progress.get("status", "")
@@ -93,7 +101,6 @@ def ask_agent(
     system: str = SYSTEM_PROMPT,
     model: str | None = None,
     max_tokens: int | None = None,
-    track: bool = True,
 ) -> str:
     """
     Blocking (non-streaming) call to the agent model.
@@ -124,14 +131,11 @@ def ask_agent(
             else:
                 return f"[Error after {MAX_RETRIES} attempts] {e}"
 
-    return "[Error] Max retries exceeded"
-
 
 def ask_code(
     messages: list,
     system: str | None = None,
     max_tokens: int | None = None,
-    track: bool = True,
 ) -> str:
     """
     Blocking (non-streaming) call to the code model.
@@ -164,8 +168,6 @@ def ask_code(
                 time.sleep(RETRY_BACKOFF * (attempt + 1))
             else:
                 return f"[Error after {MAX_RETRIES} attempts] {e}"
-
-    return "[Error] Max retries exceeded"
 
 
 # ─── Streaming LLM Calls ─────────────────────────────────────────────────────

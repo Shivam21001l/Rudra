@@ -383,3 +383,6 @@ ACTION: {"skill": "set_volume", "args": {}}
 [00:21:45] User: adjust brightness to 95
 [00:21:54] Rudra: STATUS: RUNNING
 SUMMARY: Brightness adjustment initiated.
+[00:35:03] User: python -c "import brain; import skills; import shell; import memory; import rudra; print('All modules imported successfully!')"
+[00:35:24] Rudra: [Aborted]
+[00:35:30] Rudra stopped

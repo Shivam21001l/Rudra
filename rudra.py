@@ -391,15 +391,22 @@ def respond(user_input: str, mem: dict) -> str:
             # Prevent hallucinated observations in the same turn
             if action_data and "OBSERVATION:" in reply:
                 reply = reply.split("OBSERVATION:")[0].strip()
-                # If splitting left it empty (e.g. only action was there), 
-                # we still need the ACTION: line for the parser.
+                # If splitting left it empty or removed the ACTION, try to recover
                 if "ACTION:" not in reply:
-                    # Find the action again in the full reply and keep just that line
-                    match = re.search(r'ACTION:\s*\{.*\}', "".join(full_reply))
-                    if match:
-                        reply = match.group(0)
+                    # Use robust extract_action on the full reply to get the action JSON
+                    full_text = "".join(full_reply)
+                    recovered_action = extract_action(full_text)
+                    if recovered_action:
+                        # Reconstruct a minimal valid reply with the action
+                        reply = f"ACTION: {json.dumps(recovered_action, ensure_ascii=False)}"
+                    else:
+                        # Both extraction attempts failed — keep the original pre-truncation reply
+                        reply = "".join(full_reply)
+                        log(f"[Warn] Could not extract ACTION after OBSERVATION split; keeping full reply")
 
-            messages.append({"role": "assistant", "content": reply})
+            # Only append non-empty, well-formed assistant messages
+            if reply and reply.strip():
+                messages.append({"role": "assistant", "content": reply})
 
             if action_data:
                 skill_name = action_data.get("skill", "")
