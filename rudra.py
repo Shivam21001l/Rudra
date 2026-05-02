@@ -86,16 +86,18 @@ def log(msg: str):
             pass
 
 
-# ─── Action Extraction (same robust logic as server.py) ──────────────────────
-_ACTION_RE = re.compile(r'ACTION:\s*(\{.*\})', re.DOTALL)
-
+# ─── Action Extraction ───────────────────────────────────────────────────────
 def extract_action(text: str) -> dict | None:
     """Extract the ACTION JSON from model output."""
-    m = _ACTION_RE.search(text)
-    if not m:
+    action_idx = text.find("ACTION:")
+    if action_idx == -1:
         return None
-    raw = m.group(1).strip()
-    # Find matching closing brace
+    
+    start = text.find("{", action_idx)
+    if start == -1:
+        return None
+        
+    raw = text[start:]
     depth = 0
     end = 0
     for i, ch in enumerate(raw):
@@ -374,15 +376,6 @@ def respond(user_input: str, mem: dict) -> str:
 
             messages.append({"role": "assistant", "content": reply})
 
-            # ── Check: Task complete? ──
-            if "STATUS: SUCCESS" in reply:
-                for line in reply.splitlines():
-                    if line.strip().startswith("SUMMARY:"):
-                        final_reply = line.split("SUMMARY:", 1)[1].strip()
-                if final_reply:
-                    print(f"\n  {C.GREEN}✅ Done: {final_reply}{C.RESET}\n")
-                break
-
             # ── Check: ACTION to execute? ──
             action_data = extract_action(reply)
             if action_data:
@@ -407,9 +400,19 @@ def respond(user_input: str, mem: dict) -> str:
                 # Feed observation back to LLM
                 messages.append({"role": "user", "content": f"OBSERVATION:\n{output}"})
                 mem_module.increment(mem, "tasks_done")
-            else:
-                # No ACTION and no SUCCESS → conversational reply, done
+                continue  # Skip success check this turn; let LLM process the observation next turn
+
+            # ── Check: Task complete? ──
+            if "STATUS: SUCCESS" in reply:
+                for line in reply.splitlines():
+                    if line.strip().startswith("SUMMARY:"):
+                        final_reply = line.split("SUMMARY:", 1)[1].strip()
+                if final_reply:
+                    print(f"\n  {C.GREEN}✅ Done: {final_reply}{C.RESET}\n")
                 break
+
+            # No ACTION and no SUCCESS → conversational reply, done
+            break
 
         return final_reply or reply[:500]
 
@@ -456,7 +459,7 @@ def main():
                 handle_reject(user_input)
                 continue
             elif cmd_lower == "benchmark":
-                handle_benchmark()
+                handle_benchmark(mem)
                 continue
             elif cmd_lower.startswith("rollback "):
                 fname = user_input.split(" ", 1)[1].strip()
@@ -474,10 +477,22 @@ def main():
             reply = respond(user_input, mem)
             log(f"Rudra: {reply}")
 
-            # Reflection trigger
-            if mem.get("turn", 0) % REFLECT_EVERY == 0:
+            # Increment turn counter
+            mem["turn"] = mem.get("turn", 0) + 1
+
+            # Store conversation in memory
+            mem_module.add_history(mem, "user", user_input)
+            mem_module.add_history(mem, "assistant", reply[:500])
+
+            # Reflection trigger (background, every N turns)
+            if mem["turn"] % REFLECT_EVERY == 0:
                 print(f"  {C.DIM}Rudra is reflecting...{C.RESET}")
-                mem_module.reflect(mem)
+                import threading as _t
+                _t.Thread(
+                    target=reflection.reflect_on_conversation,
+                    args=(user_input, reply),
+                    daemon=True,
+                ).start()
 
             # Save
             mem_module.save(mem)
