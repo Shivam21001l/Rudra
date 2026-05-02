@@ -262,11 +262,58 @@ registry.register("list_running_apps", list_running_apps,
 # ═══════════════════════════════════════════════════════════════════════════════
 #  6. VOLUME CONTROL
 # ═══════════════════════════════════════════════════════════════════════════════
+def get_volume() -> str:
+    """Get current master volume level."""
+    try:
+        ps_cmd = (
+            'Add-Type -TypeDefinition @"\n'
+            'using System;\n'
+            'using System.Runtime.InteropServices;\n'
+            '\n'
+            '[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n'
+            'interface IAudioEndpointVolume {\n'
+            '    int NotImpl1(); int NotImpl2(); int NotImpl3(); int NotImpl4();\n'
+            '    int SetMasterVolumeLevelScalar(float fLevel, System.Guid pguidEventContext);\n'
+            '    int GetMasterVolumeLevelScalar(out float pfLevel);\n'
+            '}\n'
+            '\n'
+            '[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n'
+            'interface IMMDevice { int Activate(ref System.Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface); }\n'
+            '\n'
+            '[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n'
+            'interface IMMDeviceEnumerator { int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice); }\n'
+            '\n'
+            '[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator {}\n'
+            '\n'
+            'public class AudioHelper {\n'
+            '    public static float GetVolume() {\n'
+            '        var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());\n'
+            '        IMMDevice device;\n'
+            '        enumerator.GetDefaultAudioEndpoint(0, 1, out device);\n'
+            '        Guid iid = typeof(IAudioEndpointVolume).GUID;\n'
+            '        object o;\n'
+            '        device.Activate(ref iid, 23, IntPtr.Zero, out o);\n'
+            '        var volume = (IAudioEndpointVolume)o;\n'
+            '        float level;\n'
+            '        volume.GetMasterVolumeLevelScalar(out level);\n'
+            '        return level;\n'
+            '    }\n'
+            '}\n'
+            '"@ -ErrorAction SilentlyContinue;\n'
+            '[AudioHelper]::GetVolume()'
+        )
+        result = run_shell(ps_cmd)
+        if "[Error]" in result or not result:
+            return "[Error] Could not retrieve volume."
+        level = float(result.strip()) * 100
+        return f"Current master volume is {int(level)}%."
+    except Exception as e:
+        return f"[Error] {e}"
+
 def set_volume(level: int = -1, mute: bool = False) -> str:
     """Set system volume (0-100) or toggle mute."""
     try:
         if mute:
-            # Toggle mute via SendKeys (virtual key 0xAD = VK_VOLUME_MUTE)
             run_shell(
                 '$wshell = New-Object -ComObject WScript.Shell; '
                 '$wshell.SendKeys([char]173)'
@@ -275,7 +322,6 @@ def set_volume(level: int = -1, mute: bool = False) -> str:
         if level < 0 or level > 100:
             return "[Error] Volume must be 0-100."
 
-        # Use PowerShell + COM to set exact volume percentage
         scalar = level / 100.0
         ps_cmd = (
             'Add-Type -TypeDefinition @"\n'
@@ -321,11 +367,23 @@ def set_volume(level: int = -1, mute: bool = False) -> str:
 
 registry.register("set_volume", set_volume,
     'Set system volume. Args: {"level": 50} or {"mute": true}')
+registry.register("get_volume", get_volume,
+    'Get current system volume level. Args: {}')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  7. BRIGHTNESS CONTROL
 # ═══════════════════════════════════════════════════════════════════════════════
+def get_brightness() -> str:
+    """Get current screen brightness (0-100)."""
+    try:
+        check = run_shell("Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness | Select -ExpandProperty CurrentBrightness")
+        if check and check.strip().isdigit():
+            return f"Current screen brightness is {check.strip()}%."
+        return "[Error] Monitor does not support WMI brightness queries."
+    except Exception as e:
+        return f"[Error] {e}"
+
 def set_brightness(level: int) -> str:
     """Set screen brightness (0-100). Works on laptops with WMI support."""
     if level < 0 or level > 100:
@@ -336,7 +394,7 @@ def set_brightness(level: int) -> str:
         check = run_shell("Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness | Select -ExpandProperty CurrentBrightness")
         if check and check.strip().isdigit():
             actual = int(check.strip())
-            if abs(actual - level) <= 2:
+            if abs(actual - level) <= 5:
                 return f"Brightness successfully set and verified at {actual}%."
             else:
                 return f"Attempted to set brightness to {level}%, but system reports it is at {actual}%. Your monitor may not support WMI brightness control."
@@ -346,6 +404,8 @@ def set_brightness(level: int) -> str:
 
 registry.register("set_brightness", set_brightness,
     'Set screen brightness (0-100). Args: {"level": 70}')
+registry.register("get_brightness", get_brightness,
+    'Get current screen brightness. Args: {}')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -33,6 +33,17 @@ import json
 import re
 import threading
 import time
+import platform
+
+# --- WMI HANG FIX ---
+# Prevent WMI queries from hanging when `ollama` client builds its User-Agent
+_original_machine = platform.machine
+platform.machine = lambda: "AMD64"
+_original_system = platform.system
+platform.system = lambda: "Windows"
+_original_python_version = platform.python_version
+platform.python_version = lambda: "3.13.0"
+# --------------------
 
 # ─── Dependency check ─────────────────────────────────────────────────────────
 try:
@@ -96,7 +107,7 @@ def extract_action(text: str) -> dict | None:
     start = text.find("{", action_idx)
     if start == -1:
         return None
-        
+    
     raw = text[start:]
     depth = 0
     end = 0
@@ -374,10 +385,22 @@ def respond(user_input: str, mem: dict) -> str:
             if "[Generation Aborted]" in reply:
                 return "[Aborted]"
 
-            messages.append({"role": "assistant", "content": reply})
-
             # ── Check: ACTION to execute? ──
             action_data = extract_action(reply)
+            
+            # Prevent hallucinated observations in the same turn
+            if action_data and "OBSERVATION:" in reply:
+                reply = reply.split("OBSERVATION:")[0].strip()
+                # If splitting left it empty (e.g. only action was there), 
+                # we still need the ACTION: line for the parser.
+                if "ACTION:" not in reply:
+                    # Find the action again in the full reply and keep just that line
+                    match = re.search(r'ACTION:\s*\{.*\}', "".join(full_reply))
+                    if match:
+                        reply = match.group(0)
+
+            messages.append({"role": "assistant", "content": reply})
+
             if action_data:
                 skill_name = action_data.get("skill", "")
                 skill_args = action_data.get("args", {})

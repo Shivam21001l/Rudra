@@ -28,7 +28,7 @@ from config import (
     UPGRADES_PENDING, UPGRADES_HISTORY,
     PROTECTED_TOKENS, MIN_CODE_LENGTH,
 )
-from brain import ask_coder, ask_agent
+from brain import ask_code, ask_agent
 from reflection import get_recent_weaknesses, analyze_source_code
 import memory as mem_module
 
@@ -154,7 +154,7 @@ HARD RULES:
 - No markdown fences, no explanations.
 - If there is genuinely nothing to improve, return exactly: NO_UPGRADE"""
 
-    new_code = ask_coder(
+    new_code = ask_code(
         [{"role": "user", "content": gen_prompt}],
         system="You are an expert Python developer rewriting a module. Return only raw Python or NO_UPGRADE.",
         max_tokens=8192,
